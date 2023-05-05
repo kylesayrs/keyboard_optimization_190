@@ -1,10 +1,18 @@
-import scipy
+#!python3
+import argparse
+
 import numpy
 import cvxpy as cp
 import matplotlib.pyplot as plt
 
 
-def solve_sdp(W: numpy.ndarray, k: int):
+parser = argparse.ArgumentParser()
+parser.add_argument("weight_file_path")           # positional argument
+parser.add_argument("-k", default=2)
+parser.add_argument("-num_iterations", default=100)
+
+
+def solve_sdp(W: numpy.ndarray, k: int, equal_partition: bool = True):
     n = W.shape[0]
     Y = cp.Variable((n, n), symmetric=True)
     ones_matrix = numpy.ones((n, n))
@@ -16,17 +24,18 @@ def solve_sdp(W: numpy.ndarray, k: int):
         Y >> 0,
         cp.diag(Y) == 1,
         Y >= (-1 / (k - 1)),
-        cp.sum(cp.sum(Y)) <= 0,
+        (cp.sum(cp.sum(Y)) <= 0) if equal_partition else True
     ]
+
     problem = cp.Problem(objective, constraints)
     problem.solve()
 
-    X = decompose_gram_matrix(Y.value)[:(k - 1)]
+    X = _decompose_gram_matrix(Y.value)[:(k - 1)]
 
     return X
 
 
-def decompose_gram_matrix(X: numpy.ndarray):
+def _decompose_gram_matrix(X: numpy.ndarray):
     eigen_values, eigen_vectors = numpy.linalg.eig(X)
     assert all(eigen_values >= -1e-04)  # tolerate small negative eigenvalues
     eigen_values = numpy.abs(eigen_values)
@@ -41,8 +50,12 @@ def decompose_gram_matrix(X: numpy.ndarray):
     return P
 
 
+def _nd_argsort(x: numpy.ndarray):
+    return numpy.dstack(numpy.unravel_index(numpy.argsort(x.ravel()), x.shape))[0]
+
+
 def random_projection_method(X: numpy.ndarray, k: int):
-    random_vectors = numpy.random.randn(X.shape[0], 2)
+    random_vectors = numpy.random.randn(X.shape[0], k)
     similaries = X.T @ random_vectors
 
     return numpy.argmax(similaries, axis=1)
@@ -52,12 +65,49 @@ def clustering_method():
     raise NotImplementedError
 
 
-def vertex_projection_method():
-    raise NotImplementedError
+def vertex_projection_method(X: numpy.ndarray, k: int):
+    print(X.shape[0])
+    print(k)
+    exit(0)
+    random_vectors = numpy.random.randn(X.shape[0], k)
+    similaries = X.T @ random_vectors
+
+    return numpy.argmax(similaries, axis=1)
 
 
-def greedy_swap():
-    raise NotImplementedError
+def _get_swap_rewards(partition: numpy.ndarray, W: numpy.ndarray, num_partitions: int):
+    num_elements = W.shape[0]
+
+    swap_rewards = [[None for _ in range(num_partitions)] for _ in range(num_elements)]
+    for element_index in range(num_elements):
+        for partition_index in range(num_partitions):
+            elements_not_in_partition = partition != partition_index
+            swap_rewards[element_index][partition_index] = (
+                sum(W[element_index][elements_not_in_partition])
+            )
+
+    return numpy.array(swap_rewards)
+
+
+def greedy_swap(partition: numpy.ndarray, W: numpy.ndarray, num_partitions: int):
+    num_elements = W.shape[0]
+    min_partition_size = num_elements // num_partitions
+
+    while True:
+        swap_rewards = _get_swap_rewards(partition, W, num_partitions)
+        for element_index, partition_index in reversed(_nd_argsort(swap_rewards)):
+            element_partition_index = partition[element_index]
+            if (
+                numpy.count_nonzero(partition == element_partition_index) > (min_partition_size + 1) and
+                numpy.count_nonzero(partition == partition_index) <= min_partition_size
+            ):
+                partition[element_index] = partition_index
+                break
+        
+        else:
+            break
+
+    return partition
 
 
 def visualize_points(points: numpy.ndarray):
@@ -78,21 +128,55 @@ def visualize_points(points: numpy.ndarray):
     axis = figure.add_subplot(111, projection="3d")
     
     # create plot
-    axis.scatter3D(*(points), s=40, color="orange", marker="o")
+    axis.scatter3D(*points, s=40, color="orange", marker="o")
     for point_i, point in enumerate(points.T):
         axis.text(*point, chr(97 + point_i))
 
     plt.show()
 
 
+def _freq_dict(partition: numpy.ndarray, k: int):
+    return {
+        partition_i: numpy.count_nonzero(partition == partition_i)
+        for partition_i in range(k)
+    }
+
+
+def get_reward(partition: numpy.ndarray, W: numpy.ndarray, num_partitions: int):
+    swap_rewards = _get_swap_rewards(partition, W, num_partitions)
+    return sum([
+        swap_rewards[element_index, element_partition]
+        for element_index, element_partition in enumerate(partition)
+    ])
+
+
 if __name__ == "__main__":
-    k = 2
-    W = numpy.loadtxt("demo_bigram_matrix.txt")
-    #W = numpy.loadtxt("bigram_matrix.txt")
+    # arguments
+    args = parser.parse_args()
 
-    X = solve_sdp(W, k)
-    #visualize_points(X)
+    # load data
+    W = numpy.loadtxt(args.weight_file_path)
 
-    class_assigments = random_projection_method(X, k)
+    # step 1
+    X = solve_sdp(W, args.k, equal_partition=True)
+    visualize_points(X)
 
-    greedy_swap()
+    # apply projections and take save the best
+    best_partition = None
+    best_partition_reward = numpy.NINF
+    for iteration_i in range(args.num_iterations):
+        # step 2
+        partition = random_projection_method(X, args.k)
+
+        # step 3
+        greedy_swap(partition, W, args.k)
+
+        # save best
+        partition_reward = get_reward(partition, W, args.k)
+        if partition_reward > best_partition_reward:
+            best_partition = partition.copy()
+            best_partition_reward = partition_reward
+
+    print(best_partition)
+    print(_freq_dict(best_partition, args.k))
+    print(best_partition_reward)
