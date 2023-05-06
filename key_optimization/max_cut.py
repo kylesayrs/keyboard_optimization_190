@@ -13,7 +13,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("weight_file_path")
 parser.add_argument("-k", type=int, default=2)
 parser.add_argument("--clustering_method", default="random", choices=["random", "kmeans", "vertices"])
-parser.add_argument("--num_iterations", default=100)
+parser.add_argument("--num_iterations", default=1000)
 
 
 def solve_sdp(W: numpy.ndarray, k: int, equal_partition: bool = True):
@@ -33,7 +33,6 @@ def solve_sdp(W: numpy.ndarray, k: int, equal_partition: bool = True):
 
     problem = cp.Problem(objective, constraints)
     problem.solve()
-    assert Y.value is not None
 
     X = _decompose_gram_matrix(Y.value)[:(k - 1)]
 
@@ -176,9 +175,10 @@ def get_reward(partition: numpy.ndarray, W: numpy.ndarray, num_partitions: int):
     ])
 
 
-def get_reward_upper_bound(W: numpy.ndarray, num_partitions: int):
+def get_reward_upper_bound(args):
+    W = numpy.loadtxt(args.weight_file_path)
     num_elements = W.shape[0]
-    min_partition_size = num_elements // num_partitions
+    min_partition_size = num_elements // args.k
 
     upper_bound = 0
     for weight in W:
@@ -223,8 +223,7 @@ def max_cut(args):
 
     print(f"mean: {numpy.mean(rewards)} +/- {numpy.std(rewards)}")
 
-    upper_bound = get_reward_upper_bound(W, args.k)
-    return best_partition, best_partition_reward, upper_bound
+    return best_partition, best_partition_reward
 
 
 def random_partition(args):
@@ -240,23 +239,31 @@ def random_partition(args):
 
     numpy.random.shuffle(partition)
     partition_reward = get_reward(partition, W, args.k)
-    upper_bound = get_reward_upper_bound(W, args.k)
-    return partition, partition_reward, upper_bound
+    return partition, partition_reward
 
 
 def do_random_experiments(args):
+    best_partition = None
+    best_partition_reward = numpy.NINF
     rewards = []
-    for experiment_i in range(1000):
-        partition, partition_reward, upper_bound = random_partition(args)
+    for _ in range(args.num_iterations):
+        partition, partition_reward = random_partition(args)
         rewards.append(partition_reward)
+        if partition_reward > best_partition_reward:
+            best_partition = partition.copy()
+            best_partition_reward = partition_reward
 
     print(f"mean: {numpy.mean(rewards)} +/- {numpy.std(rewards)}")
+
+    return best_partition, best_partition_reward
 
 
 if __name__ == "__main__":
     args = parser.parse_args()
     
-    partition, partition_reward, upper_bound = max_cut(args)
+    partition, partition_reward = max_cut(args)
+    #partition, partition_reward = do_random_experiments(args)
+    upper_bound = get_reward_upper_bound(args)
 
     print(f"Best partition: {partition}")
     print(f"reward/upper_bound: {partition_reward} / {upper_bound}")
