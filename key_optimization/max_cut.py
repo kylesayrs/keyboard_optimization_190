@@ -4,14 +4,16 @@ import argparse
 import numpy
 import cvxpy as cp
 import matplotlib.pyplot as plt
+
+from sklearn.cluster import KMeans
 from sklearn.manifold import TSNE
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument("weight_file_path")           # positional argument
+parser.add_argument("weight_file_path")
 parser.add_argument("-k", type=int, default=2)
-parser.add_argument("-clustering_method", default="random", choices=["random", "clustering", "vertices"])
-parser.add_argument("-num_iterations", default=100)
+parser.add_argument("--clustering_method", default="random", choices=["random", "kmeans", "vertices"])
+parser.add_argument("--num_iterations", default=100)
 
 
 def solve_sdp(W: numpy.ndarray, k: int, equal_partition: bool = True):
@@ -31,6 +33,7 @@ def solve_sdp(W: numpy.ndarray, k: int, equal_partition: bool = True):
 
     problem = cp.Problem(objective, constraints)
     problem.solve()
+    assert Y.value is not None
 
     X = _decompose_gram_matrix(Y.value)[:(k - 1)]
 
@@ -61,8 +64,9 @@ def random_projection_method(X: numpy.ndarray, k: int):
     return numpy.argmax(similaries, axis=1)
 
 
-def clustering_method(X: numpy.ndarray, k: int):
-    raise NotImplementedError
+def kmeans_method(X: numpy.ndarray, k: int):
+    kmeans_model = KMeans(n_clusters=k, n_init="auto")
+    return kmeans_model.fit_predict(X.T)
 
 
 def vertex_projection_method(X: numpy.ndarray, k: int):
@@ -129,8 +133,9 @@ def visualize_points(points: numpy.ndarray):
 
     # TSNE if necessary
     if len(points) > 3:
-        perplexity = min(8, points.shape[1] - 1)
-        points = TSNE(n_components=3, perplexity=perplexity).fit_transform(points.T).T
+        perplexity = min(7, points.shape[1] - 1)
+        tsne_model = TSNE(n_components=3, perplexity=perplexity)
+        points = tsne_model.fit_transform(points.T).T
 
     # create figure
     figure = plt.figure(figsize = (5, 5))
@@ -194,12 +199,13 @@ def max_cut(args):
     # apply projections and take save the best
     best_partition = None
     best_partition_reward = numpy.NINF
-    for iteration_i in range(args.num_iterations):
+    rewards = []
+    for _ in range(args.num_iterations):
         # step 2
         if args.clustering_method == "random":
             partition = random_projection_method(X, args.k)
-        elif args.clustering_method == "clustering":
-            partition = clustering_method(X, args.k)
+        elif args.clustering_method == "kmeans":
+            partition = kmeans_method(X, args.k)
         elif args.clustering_method == "vertices":
             partition = vertex_projection_method(X, args.k)
         else:
@@ -210,18 +216,54 @@ def max_cut(args):
 
         # save best
         partition_reward = get_reward(partition, W, args.k)
+        rewards.append(partition_reward)
         if partition_reward > best_partition_reward:
             best_partition = partition.copy()
             best_partition_reward = partition_reward
+
+    print(f"mean: {numpy.mean(rewards)} +/- {numpy.std(rewards)}")
 
     upper_bound = get_reward_upper_bound(W, args.k)
     return best_partition, best_partition_reward, upper_bound
 
 
+def random_partition(args):
+    W = numpy.loadtxt(args.weight_file_path)
+    num_elements = W.shape[0]
+
+    partition = numpy.zeros(num_elements, dtype=int)
+    index = 0
+    for partition_i in range(args.k):
+        for _ in range(num_elements // args.k):
+            partition[index] = partition_i
+            index += 1
+
+    numpy.random.shuffle(partition)
+    partition_reward = get_reward(partition, W, args.k)
+    upper_bound = get_reward_upper_bound(W, args.k)
+    return partition, partition_reward, upper_bound
+
+
+def do_random_experiments(args):
+    rewards = []
+    for experiment_i in range(1000):
+        partition, partition_reward, upper_bound = random_partition(args)
+        rewards.append(partition_reward)
+
+    print(f"mean: {numpy.mean(rewards)} +/- {numpy.std(rewards)}")
+
+
 if __name__ == "__main__":
     args = parser.parse_args()
+    
     partition, partition_reward, upper_bound = max_cut(args)
 
     print(f"Best partition: {partition}")
     print(f"reward/upper_bound: {partition_reward} / {upper_bound}")
     print(_letter_dict(partition, args.k))
+
+
+# bigram_matrix.txt, k=8
+# random partition: 2088070.386
+# random projection: 2235098.7 +/- 30019
+# kmeans projection: 2283022.3 +/- 4651
