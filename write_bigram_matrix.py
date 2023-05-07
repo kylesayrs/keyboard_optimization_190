@@ -343,14 +343,9 @@ if __name__ == "__main__":
         bigram_matrix[letter_one_integer, letter_two_integer] = count
         bigram_matrix[letter_two_integer, letter_one_integer] = count
 
-    fig = plt.figure(figsize=(7, 7))
-    axes = plt.axes()
-    axes.set_xticks([i for i in range(26)])
-    axes.set_yticks([i for i in range(26)])
-    axes.set_xticklabels([chr(97 + i) for i in range(26)])
-    axes.set_yticklabels([chr(97 + i) for i in range(26)])
-
-    axes.matshow(bigram_matrix)
+    plt.matshow(bigram_matrix)
+    plt.xticks(ticks=[i for i in range(26)], labels=[chr(65 + i) for i in range(26)])
+    plt.yticks(ticks=[i for i in range(26)], labels=[chr(65 + i) for i in range(26)])
     plt.show()
 
     numpy.savetxt("bigram_matrix.txt", bigram_matrix)
