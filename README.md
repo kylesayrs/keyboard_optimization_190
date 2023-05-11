@@ -1,1 +1,1 @@
-[Final Report](final_report.pdf)
+![Final Report](assets/final_report.jpg)
