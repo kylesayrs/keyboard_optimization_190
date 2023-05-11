@@ -1,1 +1,1 @@
-[embed]final_report.pdf[/embed]
+[Final Report](final_report.pdf)
